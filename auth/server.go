@@ -5,12 +5,13 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net/http"
-	"sync"
 )
 
-func callBackHandler(wg *sync.WaitGroup) func(w http.ResponseWriter, r *http.Request) {
+func callBackHandler(cancel chan<- struct{}) func(w http.ResponseWriter, r *http.Request) {
 	fn := func(w http.ResponseWriter, r *http.Request) {
-		defer wg.Done()
+		defer func() {
+			cancel <- struct{}{}
+		}()
 
 		// Get code
 
@@ -27,9 +28,9 @@ func callBackHandler(wg *sync.WaitGroup) func(w http.ResponseWriter, r *http.Req
 }
 
 // CreateAuthServer creates new server instance for Authenticated Request
-func CreateAuthServer(ctx context.Context, wg *sync.WaitGroup, address string) error {
+func CreateAuthServer(ctx context.Context, cancel chan struct{}, address string) error {
 	handler := http.NewServeMux()
-	handler.HandleFunc("/callback", callBackHandler(wg))
+	handler.HandleFunc("/callback", callBackHandler(cancel))
 
 	// create new service
 	srv := &http.Server{
@@ -42,14 +43,17 @@ func CreateAuthServer(ctx context.Context, wg *sync.WaitGroup, address string) e
 	idleConnClosed := make(chan struct{})
 
 	go func() {
-		wg.Wait()
+		select {
+		case <-ctx.Done():
+		case <-cancel:
+		}
 
-		srv.Shutdown(ctx)
 		close(idleConnClosed)
 	}()
 
 	// start the server
-	if err := srv.ListenAndServeTLS("auth/server.crt", "auth/server.key"); err != http.ErrServerClosed {
+	err := srv.ListenAndServeTLS("auth/server.crt", "auth/server.key")
+	if err != http.ErrServerClosed {
 		fmt.Println("Error:")
 		fmt.Println(err.Error())
 		fmt.Println("unable to start server")

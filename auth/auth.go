@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"sync"
 	"time"
 
 	"github.com/rassakhatsky/tdameritrade/coolStuff"
@@ -62,8 +61,8 @@ func RequestToken(timeout int) {
 
 	clientId = parseInput(reader, defaultClientID)
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
-	defer cancel()
+	ctx, ctxCancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+	defer ctxCancel()
 
 	conf := &oauth2.Config{
 		ClientID:    clientId,
@@ -72,11 +71,11 @@ func RequestToken(timeout int) {
 		RedirectURL: redirectURL,
 	}
 
-	wg := new(sync.WaitGroup)
-	wg.Add(1)
-
 	// Good time to start a server
-	go CreateAuthServer(ctx, wg, ":8888")
+	cancel := make(chan struct{})
+	defer close(cancel)
+
+	go CreateAuthServer(ctx, cancel, ":8888")
 
 	// Generate Auth URL
 	authURL := conf.AuthCodeURL("state-token", oauth2.AccessTypeOffline)
@@ -86,8 +85,13 @@ func RequestToken(timeout int) {
 	fmt.Println(authURL)
 	fmt.Println()
 
-	// wait till token is requested
-	wg.Wait()
+	// wait till token is requested or timeout
+	select {
+	case <-ctx.Done():
+		fmt.Println("timeout has been reached")
+		return
+	case <-cancel:
+	}
 
 	fmt.Println("Working...")
 	fmt.Println()
@@ -95,7 +99,7 @@ func RequestToken(timeout int) {
 	fmt.Println(oauthCode)
 
 	// oauth2 library devs leaving in a different world where everyone using broken library
-	token, err := conf.Exchange(context.Background(), oauthCode,
+	token, err := conf.Exchange(ctx, oauthCode,
 		oauth2.SetAuthURLParam("redirect_uri", redirectURL),
 		oauth2.SetAuthURLParam("client_id", clientId),
 		oauth2.SetAuthURLParam("refresh_token", ""),
