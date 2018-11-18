@@ -32,11 +32,22 @@ func CreateAuthServer(ctx context.Context, cancel chan struct{}, address string)
 	handler := http.NewServeMux()
 	handler.HandleFunc("/callback", callBackHandler(cancel))
 
+	// Generate a key pair from your pem-encoded cert and key ([]byte).
+	cert, err := tls.X509KeyPair([]byte(cert), []byte(key))
+	if err != nil {
+		fmt.Println("Error:")
+		fmt.Println(err.Error())
+		fmt.Println("unable to parse certificates")
+		return err
+	}
 	// create new service
 	srv := &http.Server{
-		Addr:      address,
-		TLSConfig: &tls.Config{InsecureSkipVerify: true},
-		Handler:   handler,
+		Addr: address,
+		TLSConfig: &tls.Config{
+			InsecureSkipVerify: true, // you really should not reuse for anything else
+			Certificates:       []tls.Certificate{cert},
+		},
+		Handler: handler,
 	}
 
 	// idleConnClosed allows to keep idle connections for some period of time
@@ -52,7 +63,7 @@ func CreateAuthServer(ctx context.Context, cancel chan struct{}, address string)
 	}()
 
 	// start the server
-	err := srv.ListenAndServeTLS("auth/server.crt", "auth/server.key")
+	err = srv.ListenAndServeTLS("", "")
 	if err != http.ErrServerClosed {
 		fmt.Println("Error:")
 		fmt.Println(err.Error())
